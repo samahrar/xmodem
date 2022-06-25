@@ -319,29 +319,47 @@ class XMODEM(object):
             checksum = self._make_send_checksum(crc_mode, data)
 
             # emit packet
+            break_loop = False
+            random_char_limit = 255
             while True:
+                if break_loop:
+                    break
                 self.log.debug('send: block %d', sequence)
                 self.putc(header + data + checksum)
-                char = self.getc(1, timeout)
-                if char == ACK:
-                    success_count += 1
-                    if callable(callback):
-                        callback(total_packets, success_count, error_count)
-                    error_count = 0
-                    break
+                while True:
+                    char = self.getc(1, timeout)
+                    if char == ACK:
+                        success_count += 1
+                        if callable(callback):
+                            callback(total_packets, success_count, error_count)
+                        error_count = 0
+                        random_char_count = 0
+                        break_loop = True
+                        break
+                    elif char == NAK:
+                        self.log.error('send error: expected ACK; got %r for block %d',
+                                    char, sequence)
+                        error_count += 1
+                        if callable(callback):
+                            callback(total_packets, success_count, error_count)
+                        if error_count > retry:
+                            # excessive amounts of retransmissions requested,
+                            # abort transfer
+                            self.log.error('send error: NAK received %d times, '
+                                        'aborting.', error_count)
+                            self.abort(timeout=timeout)
+                            return False
+                    else:
+                        random_char_count +=1
+                        self.log.error('Random Character: got %r for block %d Random count is: %d',
+                                    char, sequence,random_char_count)
+                        if random_char_count > random_char_limit:
+                            self.log.error("Too many Random Characters")
+                            self.abort(timeout=timeout)
+                            return False
 
-                self.log.error('send error: expected ACK; got %r for block %d',
-                               char, sequence)
-                error_count += 1
-                if callable(callback):
-                    callback(total_packets, success_count, error_count)
-                if error_count > retry:
-                    # excessive amounts of retransmissions requested,
-                    # abort transfer
-                    self.log.error('send error: NAK received %d times, '
-                                   'aborting.', error_count)
-                    self.abort(timeout=timeout)
-                    return False
+                        
+                
 
             # keep track of sequence
             sequence = (sequence + 1) % 0x100
